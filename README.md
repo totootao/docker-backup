@@ -10,14 +10,14 @@
 python3 docker_run_backup.py
 ```
 
-默认备份运行中的容器到 `./docker-run-backup/` 目录。**无变化时不产生新文件，有变化才生成新快照**。
+默认备份**所有容器（含已停止）**到 `./docker-run-backup/` 目录。**无变化时不产生新文件，有变化才生成新快照**。
 
 ## 常用参数
 
 | 命令 | 说明 |
 |---|---|
-| `python3 docker_run_backup.py` | 备份运行中的容器，有变化才生成新快照 |
-| `python3 docker_run_backup.py --all` | 包含已停止的容器 |
+| `python3 docker_run_backup.py` | 备份**所有容器（含已停止）**，有变化才生成新快照 |
+| `python3 docker_run_backup.py --running` | 仅备份运行中的容器 |
 | `python3 docker_run_backup.py -o /opt/backup` | 指定备份目录 |
 | `python3 docker_run_backup.py --check` | 仅打印还原结果，不写任何文件 |
 | `python3 docker_run_backup.py --keep 20` | 仅保留最近 20 份历史快照 |
@@ -78,7 +78,7 @@ bash -c "$(sed -n '/<容器名>/,/^$/p' docker-run-backup/latest.sh | grep '^doc
 - ✅ 用还原命令**实际重建容器**后与原容器 `docker inspect` 逐字段对比**完全等价**
 - ✅ 重复执行时正确识别「无变化」不产生新备份
 - ✅ `docker update` 修改重启策略后正确检测变化并生成新快照，diff 精确反映差异
-- ✅ `--all` 正确包含 exited 容器并标注退出码
+- ✅ 默认正确包含 exited（已停止）容器并标注退出码
 
 ## 建议配合 crontab 定期备份
 

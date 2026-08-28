@@ -556,8 +556,8 @@ def main():
         description="从 Docker 容器逆向还原 docker run 命令并智能备份")
     ap.add_argument("-o", "--output", default=DEFAULT_OUTDIR,
                     help="备份目录 (默认 ./%s)" % DEFAULT_OUTDIR)
-    ap.add_argument("--all", action="store_true",
-                    help="包含已停止的容器 (默认仅运行中的)")
+    ap.add_argument("--running", action="store_true",
+                    help="仅包含运行中的容器 (默认包含已停止的)")
     ap.add_argument("--check", action="store_true",
                     help="仅打印还原结果, 不写入备份")
     ap.add_argument("--no-env-filter", action="store_true",
@@ -571,7 +571,7 @@ def main():
         sys.stderr.write("[错误] 无法连接 Docker 守护进程\n")
         sys.exit(1)
 
-    containers = list_containers(include_stopped=args.all)
+    containers = list_containers(include_stopped=not args.running)
     daemon_log_driver = get_daemon_log_driver()
     now = datetime.datetime.now().astimezone()
     stats = {}
@@ -589,7 +589,7 @@ def main():
 
     if stats.get("total", 0) == 0:
         print("[提示] 当前没有%s容器, 不生成备份。"
-              % ("任何" if args.all else "运行中的"))
+              % ("运行中的" if args.running else "任何"))
         return
 
     old = None

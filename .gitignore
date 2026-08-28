@@ -1,0 +1,9 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Agent workspace
+.codebuddy/
+
+# Local backup output (keep your own backups out of the repo)
+docker-run-backup/

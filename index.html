@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Docker 备份浏览器</title>
+<style>
+  :root{
+    --bg:#0f1419; --panel:#161c24; --panel2:#1d2530; --line:#2a3442;
+    --txt:#e6edf3; --muted:#8b98a5; --accent:#3b82f6; --accent2:#22c55e;
+    --warn:#f59e0b; --bad:#ef4444; --snap:#3b82f6; --latest:#22c55e; --log:#a855f7;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+       background:var(--bg);color:var(--txt);font-size:14px;line-height:1.5}
+  a{color:var(--accent);text-decoration:none}
+  .topbar{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:16px;
+          padding:12px 20px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .brand{font-weight:700;font-size:16px;display:flex;align-items:center;gap:8px}
+  .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--muted)}
+  .brand .dot.ok{background:var(--accent2)} .brand .dot.bad{background:var(--bad)}
+  .pills{display:flex;gap:10px;flex-wrap:wrap;margin-left:auto;align-items:center}
+  .pill{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:12px;color:var(--muted)}
+  .pill b{color:var(--txt);font-weight:600}
+  .btn{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 14px;font-size:13px;
+       cursor:pointer;font-weight:600}
+  .btn:hover{filter:brightness(1.1)} .btn:disabled{opacity:.5;cursor:default}
+  .btn.ghost{background:var(--panel2);border:1px solid var(--line);color:var(--txt)}
+  .layout{display:grid;grid-template-columns:340px 1fr;gap:16px;padding:16px 20px;align-items:start}
+  @media(max-width:860px){.layout{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .card h3{margin:0;padding:12px 14px;border-bottom:1px solid var(--line);font-size:13px;color:var(--muted);
+           text-transform:uppercase;letter-spacing:.5px;display:flex;justify-content:space-between;align-items:center}
+  .filelist{max-height:70vh;overflow:auto}
+  .file{padding:11px 14px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center;cursor:pointer}
+  .file:hover{background:var(--panel2)}
+  .file.active{background:var(--panel2);box-shadow:inset 3px 0 0 var(--accent)}
+  .fmeta{min-width:0;flex:1}
+  .fname{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .fsub{color:var(--muted);font-size:11px;margin-top:2px}
+  .badge{font-size:10px;padding:2px 7px;border-radius:20px;font-weight:700;letter-spacing:.3px;white-space:nowrap}
+  .b-snapshot{background:rgba(59,130,246,.15);color:var(--snap)}
+  .b-latest{background:rgba(34,197,94,.15);color:var(--latest)}
+  .b-log{background:rgba(168,85,247,.15);color:var(--log)}
+  .b-other{background:var(--panel2);color:var(--muted)}
+  .factions{display:flex;gap:6px}
+  .iconbtn{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:6px;
+           padding:4px 8px;font-size:11px;cursor:pointer}
+  .iconbtn:hover{border-color:var(--accent);color:var(--accent)}
+  .main{min-height:60vh;display:flex;flex-direction:column}
+  .tabs{display:flex;gap:6px;padding:10px 14px 0}
+  .tab{background:transparent;border:1px solid var(--line);border-bottom:none;color:var(--muted);
+       padding:7px 14px;border-radius:8px 8px 0 0;cursor:pointer;font-size:13px}
+  .tab.active{background:var(--panel2);color:var(--txt);border-color:var(--line)}
+  .pane{display:none;padding:14px}
+  .pane.active{display:block}
+  pre{margin:0;white-space:pre;overflow:auto;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
+  .codewrap{background:#0b0f14;border:1px solid var(--line);border-radius:10px;max-height:64vh;overflow:auto;padding:12px}
+  .ln{color:var(--muted);user-select:none;display:inline-block;width:42px;text-align:right;margin-right:14px;
+      border-right:1px solid var(--line);padding-right:8px}
+  .diff-add{background:rgba(34,197,94,.12)} .diff-del{background:rgba(239,68,68,.12)}
+  .diff-add .ln{border-color:rgba(34,197,94,.4)} .diff-del .ln{border-color:rgba(239,68,68,.4)}
+  .diff-hunk{color:var(--warn)}
+  .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+  select{background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:13px;min-width:200px}
+  .empty{color:var(--muted);text-align:center;padding:40px 10px}
+  .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--panel2);
+         border:1px solid var(--line);border-left:4px solid var(--accent2);padding:12px 18px;border-radius:10px;
+         box-shadow:0 8px 30px rgba(0,0,0,.4);opacity:0;transition:.25s;pointer-events:none;max-width:90vw}
+  .toast.show{opacity:1}
+  .toast.bad{border-left-color:var(--bad)} .toast.warn{border-left-color:var(--warn)}
+  .spinner{display:inline-block;width:13px;height:13px;border:2px solid rgba(255,255,255,.3);
+           border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px;margin-right:6px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand"><span class="dot" id="dockerDot"></span> 🐳 Docker 备份浏览器</div>
+    <div class="pills">
+      <span class="pill">下次备份 <b id="nextRun">—</b></span>
+      <span class="pill">上次备份 <b id="lastRun">—</b></span>
+      <button class="btn" id="backupBtn">立即备份</button>
+    </div>
+  </div>
+
+  <div class="layout">
+    <!-- 左侧文件列表 -->
+    <div class="card">
+      <h3>备份文件 <span id="fileCount" style="color:var(--muted)"></span></h3>
+      <div class="filelist" id="fileList"></div>
+    </div>
+
+    <!-- 右侧主区 -->
+    <div class="card main">
+      <div class="tabs">
+        <button class="tab active" data-pane="view">查看</button>
+        <button class="tab" data-pane="diff">对比</button>
+        <button class="tab" data-pane="history">变更日志</button>
+      </div>
+
+      <div class="pane active" id="pane-view">
+        <div class="toolbar">
+          <span id="viewTitle" class="fsub" style="font-size:13px">从左侧选择一个文件查看</span>
+          <span style="margin-left:auto"><button class="iconbtn" id="downloadBtn">⬇ 下载</button></span>
+        </div>
+        <div class="codewrap" id="viewCode"><div class="empty">暂无内容</div></div>
+      </div>
+
+      <div class="pane" id="pane-diff">
+        <div class="toolbar">
+          <select id="diffA"></select>
+          <span style="color:var(--muted)">对比</span>
+          <select id="diffB"></select>
+          <button class="btn ghost" id="diffBtn">生成对比</button>
+        </div>
+        <div class="codewrap" id="diffCode"><div class="empty">选择两个快照后点击「生成对比」</div></div>
+      </div>
+
+      <div class="pane" id="pane-history">
+        <div class="codewrap" id="histCode"><div class="empty">暂无变更日志</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+let current = null; // 当前查看的文件名
+
+function toast(msg, kind){
+  const t = $("#toast");
+  t.textContent = msg;
+  t.className = "toast show" + (kind ? " "+kind : "");
+  setTimeout(()=> t.className = "toast", 3200);
+}
+function esc(s){ return (s||"").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+
+function fmtSize(n){
+  if(n < 1024) return n + " B";
+  if(n < 1024*1024) return (n/1024).toFixed(1) + " KB";
+  return (n/1024/1024).toFixed(1) + " MB";
+}
+const TYPE_LABEL = {snapshot:"快照", latest:"最新", log:"日志", other:"其它"};
+const TYPE_BADGE = {snapshot:"b-snapshot", latest:"b-latest", log:"b-log", other:"b-other"};
+
+function renderFiles(files){
+  const box = $("#fileList");
+  $("#fileCount").textContent = files.length ? "("+files.length+")" : "";
+  if(!files.length){ box.innerHTML = '<div class="empty">备份目录为空<br>请先执行一次备份</div>'; return; }
+  box.innerHTML = files.map(f => `
+    <div class="file" data-name="${esc(f.name)}">
+      <span class="badge ${TYPE_BADGE[f.type]}">${TYPE_LABEL[f.type]||"其它"}</span>
+      <div class="fmeta">
+        <div class="fname">${esc(f.name)}</div>
+        <div class="fsub">${f.mtime} · ${fmtSize(f.size)}</div>
+      </div>
+      <div class="factions">
+        <button class="iconbtn" data-act="view">查看</button>
+        <button class="iconbtn" data-act="dl">下载</button>
+      </div>
+    </div>`).join("");
+  box.querySelectorAll(".file").forEach(el => {
+    el.addEventListener("click", e => {
+      const act = e.target.dataset.act;
+      const name = el.dataset.name;
+      if(act === "dl"){ download(name); return; }
+      openView(name);
+    });
+  });
+  // 填充对比下拉
+  const opts = files.map(f => `<option value="${esc(f.name)}">${esc(f.name)}</option>`).join("");
+  $("#diffA").innerHTML = opts; $("#diffB").innerHTML = opts;
+  // 默认 B 选中 latest.sh
+  const latest = files.find(f => f.name === "latest.sh");
+  if(latest) $("#diffB").value = "latest.sh";
+}
+
+async function refresh(){
+  const r = await fetch("/api/state").then(x => x.json());
+  $("#dockerDot").className = "dot " + (r.docker_ok ? "ok" : "bad");
+  $("#nextRun").textContent = r.next_run || "—";
+  $("#lastRun").textContent = r.last_run || "—";
+  renderFiles(r.files || []);
+}
+
+async function openView(name){
+  current = name;
+  document.querySelectorAll(".file").forEach(el =>
+    el.classList.toggle("active", el.dataset.name === name));
+  $("#viewTitle").textContent = name;
+  const r = await fetch("/api/file?name=" + encodeURIComponent(name)).then(x => x.json());
+  if(r.error){ $("#viewCode").innerHTML = '<div class="empty">'+esc(r.error)+'</div>'; return; }
+  const lines = r.content.split("\n").map((l,i) =>
+    `<div><span class="ln">${i+1}</span>${esc(l)}</div>`).join("");
+  $("#viewCode").innerHTML = lines;
+}
+function download(name){
+  window.open("/api/download?name=" + encodeURIComponent(name), "_blank");
+}
+
+async function doBackup(){
+  const btn = $("#backupBtn");
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>备份中…';
+  try{
+    const r = await fetch("/api/backup", {method:"POST"}).then(x => x.json());
+    if(r.ok && r.changed){
+      toast("✅ 已生成新快照：" + r.snapshot, "");
+    }else if(r.ok && !r.changed){
+      toast("ℹ️ " + (r.reason === "无容器" ? "当前无任何容器" : "与上次备份一致，无变化"), "warn");
+    }else{
+      toast("⚠️ 备份失败：" + (r.reason || "未知错误"), "bad");
+    }
+    await refresh();
+  }catch(e){ toast("⚠️ 请求失败：" + e, "bad"); }
+  finally{ btn.disabled = false; btn.textContent = "立即备份"; }
+}
+
+async function doDiff(){
+  const a = $("#diffA").value, b = $("#diffB").value;
+  if(!a || !b){ toast("请选择两个文件", "warn"); return; }
+  const r = await fetch("/api/diff?a="+encodeURIComponent(a)+"&b="+encodeURIComponent(b)).then(x=>x.json());
+  if(r.error){ $("#diffCode").innerHTML = '<div class="empty">'+esc(r.error)+'</div>'; return; }
+  const html = r.diff.map(l => {
+    const cls = l.startsWith("+") ? "diff-add" : l.startsWith("-") ? "diff-del" :
+                (l.startsWith("@@") ? "diff-hunk" : "");
+    return `<div class="${cls}"><span class="ln"></span>${esc(l)}</div>`;
+  }).join("");
+  $("#diffCode").innerHTML = html || '<div class="empty">两个文件完全相同</div>';
+}
+
+async function loadHistory(){
+  const r = await fetch("/api/history").then(x => x.json());
+  const c = (r.content || "").trim();
+  if(!c){ $("#histCode").innerHTML = '<div class="empty">暂无变更记录</div>'; return; }
+  const lines = c.split("\n").map((l,i) =>
+    `<div><span class="ln">${i+1}</span>${esc(l)}</div>`).join("");
+  $("#histCode").innerHTML = lines;
+}
+
+document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => {
+  document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+  document.querySelectorAll(".pane").forEach(x => x.classList.remove("active"));
+  t.classList.add("active");
+  const p = $("#pane-" + t.dataset.pane);
+  p.classList.add("active");
+  if(t.dataset.pane === "history") loadHistory();
+}));
+$("#backupBtn").addEventListener("click", doBackup);
+$("#downloadBtn").addEventListener("click", () => current && download(current));
+$("#diffBtn").addEventListener("click", doDiff);
+
+refresh();
+</script>
+</body>
+</html>

@@ -551,46 +551,55 @@ def strip_volatile(text):
                      if not l.startswith("# 生成时间"))
 
 
-def main():
-    ap = argparse.ArgumentParser(
-        description="从 Docker 容器逆向还原 docker run 命令并智能备份")
-    ap.add_argument("-o", "--output", default=DEFAULT_OUTDIR,
-                    help="备份目录 (默认 ./%s)" % DEFAULT_OUTDIR)
-    ap.add_argument("--running", action="store_true",
-                    help="仅包含运行中的容器 (默认包含已停止的)")
-    ap.add_argument("--check", action="store_true",
-                    help="仅打印还原结果, 不写入备份")
-    ap.add_argument("--no-env-filter", action="store_true",
-                    help="环境变量全量输出(不做镜像默认值过滤)")
-    ap.add_argument("--keep", type=int, default=0, metavar="N",
-                    help="仅保留最近 N 份历史快照, 0=全部保留")
-    args = ap.parse_args()
+def run_backup(backup_dir=DEFAULT_OUTDIR, running_only=False,
+               no_env_filter=False, keep=0, check=False):
+    """执行一次备份/检查, 返回结果字典(供 Web / 调度器复用, 不向 stdout 输出)。
 
+    返回字段:
+      ok       : 是否成功执行(可连接 docker 且有容器 / 或 check 成功)
+      changed  : 是否生成了新快照
+      reason   : 人类可读原因(首次备份 / 检测到变化 / 无变化 / 无容器 / 错误说明)
+      snapshot : 新快照文件名(无变化或仅检查时为 latest.sh / None)
+      total    : 容器总数
+      running  : 运行中容器数
+      check    : 是否为检查模式
+      content  : check 模式下的还原内容(仅 check=True 时填充)
+    """
+    result = {"ok": False, "changed": False, "reason": "",
+              "snapshot": None, "total": 0, "running": 0,
+              "check": check, "content": None}
     if not run_docker(["version", "--format", "{{.Server.Version}}"],
                       none_on_fail=True):
-        sys.stderr.write("[错误] 无法连接 Docker 守护进程\n")
-        sys.exit(1)
+        result["reason"] = "无法连接 Docker 守护进程"
+        return result
 
-    containers = list_containers(include_stopped=not args.running)
+    containers = list_containers(include_stopped=not running_only)
     daemon_log_driver = get_daemon_log_driver()
     now = datetime.datetime.now().astimezone()
     stats = {}
-    content = render_backup(containers, args, daemon_log_driver, now, stats)
+    content = render_backup(containers,
+                            argparse.Namespace(no_env_filter=no_env_filter),
+                            daemon_log_driver, now, stats)
+    total = stats.get("total", 0)
+    running = stats.get("running", 0)
+    result["total"] = total
+    result["running"] = running
 
-    if args.check:
-        print(content)
-        print("# [check 模式] 共 %d 个容器, 未写入任何文件" % stats.get("total", 0))
-        return
+    if check:
+        result["ok"] = True
+        result["content"] = content
+        result["reason"] = "检查完成"
+        return result
 
-    outdir = os.path.abspath(args.output)
+    outdir = os.path.abspath(backup_dir)
     os.makedirs(outdir, exist_ok=True)
     latest_path = os.path.join(outdir, "latest.sh")
     log_path = os.path.join(outdir, "backup-history.log")
 
-    if stats.get("total", 0) == 0:
-        print("[提示] 当前没有%s容器, 不生成备份。"
-              % ("运行中的" if args.running else "任何"))
-        return
+    if total == 0:
+        result["ok"] = True
+        result["reason"] = "无容器"
+        return result
 
     old = None
     if os.path.exists(latest_path):
@@ -598,11 +607,10 @@ def main():
             old = f.read()
 
     if old is not None and strip_volatile(old) == strip_volatile(content):
-        print("[OK] %d 个容器, 与最近一次备份(%s)一致, 无变化, 未生成新备份。"
-              % (stats["total"],
-                 datetime.datetime.fromtimestamp(
-                     os.path.getmtime(latest_path)).strftime("%Y-%m-%d %H:%M:%S")))
-        return
+        result["ok"] = True
+        result["reason"] = "无变化"
+        result["snapshot"] = "latest.sh"
+        return result
 
     ts = now.strftime("%Y%m%d-%H%M%S")
     snap_path = os.path.join(outdir, "docker-run-backup-%s.sh" % ts)
@@ -621,20 +629,61 @@ def main():
     with open(log_path, "a", encoding="utf-8") as f:
         f.write("%s\t%s\t容器数=%d\t文件=%s\n"
                 % (now.strftime("%Y-%m-%d %H:%M:%S"), reason,
-                   stats["total"], os.path.basename(snap_path)))
+                   total, os.path.basename(snap_path)))
 
     # 历史快照数量控制
-    if args.keep and args.keep > 0:
+    if keep and keep > 0:
         snaps = sorted(s for s in os.listdir(outdir)
                        if s.startswith("docker-run-backup-") and s.endswith(".sh"))
-        for s in snaps[:-args.keep] if len(snaps) > args.keep else []:
+        for s in (snaps[:-keep] if len(snaps) > keep else []):
             os.remove(os.path.join(outdir, s))
 
-    print("[备份] %s (%d 个容器, 运行中 %d)" % (snap_path, stats["total"], stats["running"]))
-    if old is not None:
+    result["ok"] = True
+    result["changed"] = True
+    result["reason"] = reason
+    result["snapshot"] = os.path.basename(snap_path)
+    return result
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description="从 Docker 容器逆向还原 docker run 命令并智能备份")
+    ap.add_argument("-o", "--output", default=DEFAULT_OUTDIR,
+                    help="备份目录 (默认 ./%s)" % DEFAULT_OUTDIR)
+    ap.add_argument("--running", action="store_true",
+                    help="仅包含运行中的容器 (默认包含已停止的)")
+    ap.add_argument("--check", action="store_true",
+                    help="仅打印还原结果, 不写入备份")
+    ap.add_argument("--no-env-filter", action="store_true",
+                    help="环境变量全量输出(不做镜像默认值过滤)")
+    ap.add_argument("--keep", type=int, default=0, metavar="N",
+                    help="仅保留最近 N 份历史快照, 0=全部保留")
+    args = ap.parse_args()
+
+    res = run_backup(backup_dir=args.output, running_only=args.running,
+                     no_env_filter=args.no_env_filter, keep=args.keep,
+                     check=args.check)
+    if args.check:
+        if res.get("content"):
+            print(res["content"])
+        print("# [check 模式] 共 %d 个容器, 未写入任何文件" % res.get("total", 0))
+        return
+    if not res["ok"]:
+        sys.stderr.write("[错误] %s\n" % res.get("reason", "未知错误"))
+        sys.exit(1)
+    outdir = os.path.abspath(args.output)
+    if not res["changed"]:
+        if res["reason"] == "无容器":
+            print("[提示] 当前没有任何容器, 不生成备份。")
+        else:
+            print("[OK] %d 个容器, 与最近一次备份一致, 无变化, 未生成新备份。"
+                  % res["total"])
+    else:
+        print("[备份] %s (%d 个容器, 运行中 %d)"
+              % (os.path.join(outdir, res["snapshot"]), res["total"], res["running"]))
         print("[对比] 本次与上次内容存在差异, 已保存新快照并更新 latest.sh")
-    print("      最新备份始终同步于: %s" % latest_path)
-    print("      变更日志: %s" % log_path)
+    print("      最新备份始终同步于: %s" % os.path.join(outdir, "latest.sh"))
+    print("      变更日志: %s" % os.path.join(outdir, "backup-history.log"))
 
 
 if __name__ == "__main__":

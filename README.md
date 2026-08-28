@@ -80,11 +80,15 @@ bash -c "$(sed -n '/<容器名>/,/^$/p' docker-run-backup/latest.sh | grep '^doc
 - ✅ `docker update` 修改重启策略后正确检测变化并生成新快照，diff 精确反映差异
 - ✅ 默认正确包含 exited（已停止）容器并标注退出码
 
-## 建议配合 crontab 定期备份
+## 定时备份（有变化才落盘）
+
+**方式一：容器镜像内置调度（推荐）**。使用下方「Docker 镜像」方式运行时，Web 服务内置后台调度线程，**每天 00:00 自动执行一次备份**（仅配置变化时才生成新快照），无需额外配置。
+
+**方式二：宿主机 crontab**。直接跑脚本时，可让系统定时触发：
 
 ```bash
-# 每小时检查一次, 有变化才落盘; 保留最近 30 份
-0 * * * * /usr/bin/python3 /opt/docker_run_backup.py -o /opt/docker-run-backup --keep 30 >> /var/log/docker-run-backup.log 2>&1
+# 每天 0 点检查一次, 有变化才落盘; 保留最近 30 份
+0 0 * * * /usr/bin/python3 /opt/docker_run_backup.py -o /opt/docker-run-backup --keep 30 >> /var/log/docker-run-backup.log 2>&1
 ```
 
 ## Docker 镜像（容器化运行）
@@ -99,7 +103,7 @@ bash -c "$(sed -n '/<容器名>/,/^$/p' docker-run-backup/latest.sh | grep '^doc
 ```bash
 docker pull totootao/docker-backup:latest
 
-# 仅预览还原结果（等价于 --check）
+# 仅预览还原结果（等价 --check）
 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock totootao/docker-backup:latest --check
 
 # 备份到当前目录的 docker-run-backup/（有变化才生成新快照）
@@ -107,5 +111,38 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD":/backup totootao/docker-backup:latest -o /backup/docker-run-backup
 ```
 
+### Web 备份浏览器（默认启动）
+
+镜像默认启动内置 Web 服务，并**每天 00:00 自动备份**一次。把备份目录挂到宿主机，即可在浏览器里浏览/对比/下载所有备份快照：
+
+```bash
+docker run -d --name docker-backup -p 8080:8080 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$PWD/backup":/backup \
+  totootao/docker-backup:latest
+
+# 浏览器打开
+open http://localhost:8080      # 或 http://<宿主机IP>:8080
+```
+
+Web 页面功能：
+
+- **文件列表**：按时间列出所有快照、`latest.sh`、变更日志，带类型徽标与大小/修改时间
+- **查看 / 下载**：在线查看文件内容（带行号），一键下载
+- **差异对比**：选两个快照（如某历史快照 vs `latest.sh`）生成 unified diff，红绿高亮增删
+- **变更日志**：直接展示 `backup-history.log`
+- **立即备份**：手动触发一次备份，结果实时提示（有变化才生成新快照）
+
+环境变量（均可选）：
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `BACKUP_DIR` | `/backup` | 备份目录（建议挂载为卷持久化） |
+| `PORT` | `8080` | Web 监听端口 |
+| `HOST` | `0.0.0.0` | Web 监听地址 |
+| `SCHEDULER` | `on` | 设为 `off` 关闭每日 00:00 自动备份 |
+| `RUN_ON_START` | `1` | 设为 `0` 关闭容器启动时的首次播种备份 |
+
+> Web 服务用 Python 标准库实现，**零额外依赖**，镜像体积小、构建可靠。
 > 容器内通过宿主机的 `docker.sock` 操作 Docker，因此无需在容器内运行 dockerd。
 > 镜像自动构建依赖仓库 Secrets：`DOCKERHUB_USERNAME` 与 `DOCKERHUB_PASSWORD`，需在 GitHub 仓库 **Settings → Secrets and variables → Actions** 中配置后，工作流才能登录并推送。

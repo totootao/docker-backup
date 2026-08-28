@@ -86,3 +86,26 @@ bash -c "$(sed -n '/<容器名>/,/^$/p' docker-run-backup/latest.sh | grep '^doc
 # 每小时检查一次, 有变化才落盘; 保留最近 30 份
 0 * * * * /usr/bin/python3 /opt/docker_run_backup.py -o /opt/docker-run-backup --keep 30 >> /var/log/docker-run-backup.log 2>&1
 ```
+
+## Docker 镜像（容器化运行）
+
+工具已打包为 Docker 镜像，由本仓库的 GitHub Actions 工作流（`.github/workflows/docker-image.yml`）在 push 到 `master` 时**自动构建并推送**到 Docker Hub：
+
+- `totootao/docker-backup:latest`
+- `totootao/docker-backup:<commit-sha>`
+
+拉取与运行（挂载宿主机 `docker.sock` 即可备份该宿主机的容器配置）：
+
+```bash
+docker pull totootao/docker-backup:latest
+
+# 仅预览还原结果（等价于 --check）
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock totootao/docker-backup:latest --check
+
+# 备份到当前目录的 docker-run-backup/（有变化才生成新快照）
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$PWD":/backup totootao/docker-backup:latest -o /backup/docker-run-backup
+```
+
+> 容器内通过宿主机的 `docker.sock` 操作 Docker，因此无需在容器内运行 dockerd。
+> 镜像自动构建依赖仓库 Secrets：`DOCKERHUB_USERNAME` 与 `DOCKERHUB_PASSWORD`，需在 GitHub 仓库 **Settings → Secrets and variables → Actions** 中配置后，工作流才能登录并推送。

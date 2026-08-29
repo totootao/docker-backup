@@ -135,7 +135,10 @@
       <div class="pane" id="pane-containers">
         <div class="toolbar">
           <span id="contTitle" class="fsub" style="font-size:13px">从 latest.sh 提取</span>
-          <span style="margin-left:auto;color:var(--muted);font-size:12px">点击「复制」可一键复制单个容器的 docker run 命令</span>
+          <span style="margin-left:auto;display:flex;gap:8px;align-items:center">
+            <button class="iconbtn" id="copyAllSingle">📋 复制全部(单行)</button>
+            <button class="iconbtn" id="copyAllMulti">📋 复制全部(多行)</button>
+          </span>
         </div>
         <div id="contList"><div class="empty">选择「容器」标签页后加载</div></div>
       </div>
@@ -292,10 +295,13 @@ function statusBadge(status){
   return {cls:"cc-warn", txt:status || "—"};
 }
 
+let contData = [];  // 当前「容器」标签页的容器数据, 供全局复制使用
+
 async function loadContainers(){
   const r = await fetch("/api/containers").then(x => x.json());
   if(r.error){ $("#contList").innerHTML = '<div class="empty">'+esc(r.error)+'</div>'; return; }
   const cs = r.containers || [];
+  contData = cs;
   if(!cs.length){
     $("#contList").innerHTML = '<div class="empty">该备份文件未提取到容器命令</div>';
     $("#contTitle").textContent = r.name;
@@ -325,9 +331,20 @@ async function loadContainers(){
     });
   });
 }
+
+function copyAll(kind){
+  if(!contData.length){ toast("没有可复制的容器", "warn"); return; }
+  if(kind === "single"){
+    copyText(contData.map(c => c.single).join("\n"), "✅ 已复制全部单行命令");
+  }else{
+    copyText(contData.map(c => c.multi).join("\n\n"), "✅ 已复制全部多行命令");
+  }
+}
 $("#backupBtn").addEventListener("click", doBackup);
 $("#downloadBtn").addEventListener("click", () => current && download(current));
 $("#diffBtn").addEventListener("click", doDiff);
+$("#copyAllSingle").addEventListener("click", () => copyAll("single"));
+$("#copyAllMulti").addEventListener("click", () => copyAll("multi"));
 
 refresh();
 </script>

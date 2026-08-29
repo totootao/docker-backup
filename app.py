@@ -152,6 +152,59 @@ def diff_files(a, b):
         fromfile=a, tofile=b, lineterm=""))
 
 
+def parse_containers(text):
+    """从备份脚本文本中拆分为每个容器的 docker run 命令。
+
+    返回 list[dict]: {idx, name, status, image, multi, single}
+      multi  = 多行友好格式 (带续行符 \\)
+      single = 单行紧凑格式 (去掉续行符, 可直接粘贴执行)
+    """
+    blocks = []
+    cur = None
+    for line in (text or "").split("\n"):
+        if line.startswith("# 容器:"):
+            rest = line[len("# 容器:"):].strip()
+            name = rest.split("状态:")[0].strip()
+            status = ""
+            if "状态:" in rest:
+                status = rest.split("状态:", 1)[1].strip()
+            cur = {"name": name, "status": status, "meta": [], "cmd": []}
+            blocks.append(cur)
+        elif cur is not None:
+            if line.startswith("#"):
+                cur["meta"].append(line)  # 容器内注释
+            else:
+                cur["cmd"].append(line)
+
+    out = []
+    for idx, b in enumerate(blocks):
+        multi = "\n".join(b["cmd"]).strip("\n")
+        # 单行: 去掉缩进与续行符 \\, 用空格连接为一个可粘贴命令
+        parts = []
+        for ln in b["cmd"]:
+            ln = ln.strip()
+            if not ln:
+                continue
+            if ln.endswith("\\"):
+                ln = ln[:-1].rstrip()  # 去掉反斜杠及其前的空白
+            parts.append(ln)
+        single = " ".join(parts)
+
+        image = ""
+        for m in b["meta"]:
+            if m.startswith("# 镜像:"):
+                image = m[len("# 镜像:"):].strip()
+        out.append({
+            "idx": idx,
+            "name": b["name"],
+            "status": b["status"],
+            "image": image,
+            "multi": multi,
+            "single": single,
+        })
+    return out
+
+
 def api_state():
     docker_ok = bool(drbb_version())
     nxt = state["next_run"]
@@ -224,7 +277,16 @@ class Handler(BaseHTTPRequestHandler):
             if c is None:
                 self._send_json({"error": "文件不存在或越权访问"}, 404)
                 return
-            self._send_json({"name": name, "content": c})
+            self._send_json({"name":  name, "content": c})
+            return
+        if path == "/api/containers":
+            name = qs.get("name", ["latest.sh"])[0]
+            c = file_content(name)
+            if c is None:
+                self._send_json({"error": "文件不存在或越权访问"}, 404)
+                return
+            self._send_json({"name": name,
+                             "containers": parse_containers(c)})
             return
         if path == "/api/diff":
             a, b = qs.get("a", [""])[0], qs.get("b", [""])[0]

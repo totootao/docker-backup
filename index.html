@@ -70,8 +70,18 @@
   .toast.show{opacity:1}
   .toast.bad{border-left-color:var(--bad)} .toast.warn{border-left-color:var(--warn)}
   .spinner{display:inline-block;width:13px;height:13px;border:2px solid rgba(255,255,255,.3);
-           border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px;margin-right:6px}
+           border-top-color:#fff;border-radius:50%;,animation:spin .7s linear infinite;vertical-align:-2px;margin-right:6px}
   @keyframes spin{to{transform:rotate(360deg)}}
+  .contcard{background:var(--panel2);border:1px solid var(--line);border-radius:10px;margin-bottom:14px;overflow:hidden}
+  .cc-head{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .cname{font-weight:700;font-size:14px}
+  .cimg{color:var(--muted);font-size:12px;font-family:ui-monospace,monospace}
+  .cc-actions{padding:10px 14px;display:flex;gap:8px}
+  .cc-actions .iconbtn{padding:7px 14px;font-size:12px}
+  .cc-badge{font-size:10px;padding:2px 8px;border-radius:20px;font-weight:700}
+  .cc-ok{background:rgba(34,197,94,.15);color:var(--accent2)}
+  .cc-bad{background:rgba(239,68,68,.15);color:var(--bad)}
+  .cc-warn{background:rgba(245,158,11,.15);color:var(--warn)}
 </style>
 </head>
 <body>
@@ -95,6 +105,7 @@
     <div class="card main">
       <div class="tabs">
         <button class="tab active" data-pane="view">查看</button>
+        <button class="tab" data-pane="containers">容器</button>
         <button class="tab" data-pane="diff">对比</button>
         <button class="tab" data-pane="history">变更日志</button>
       </div>
@@ -120,6 +131,14 @@
       <div class="pane" id="pane-history">
         <div class="codewrap" id="histCode"><div class="empty">暂无变更日志</div></div>
       </div>
+
+      <div class="pane" id="pane-containers">
+        <div class="toolbar">
+          <span id="contTitle" class="fsub" style="font-size:13px">从 latest.sh 提取</span>
+          <span style="margin-left:auto;color:var(--muted);font-size:12px">点击「复制」可一键复制单个容器的 docker run 命令</span>
+        </div>
+        <div id="contList"><div class="empty">选择「容器」标签页后加载</div></div>
+      </div>
     </div>
   </div>
 
@@ -136,6 +155,24 @@ function toast(msg, kind){
   setTimeout(()=> t.className = "toast", 3200);
 }
 function esc(s){ return (s||"").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+
+function copyText(text, msg){
+  const done = () => toast(msg, "");
+  const fail = () => toast("复制失败，请手动选择文本", "bad");
+  if(navigator.clipboard && window.isSecureContext){
+    navigator.clipboard.writeText(text).then(done).catch(()=>fallbackCopy(text, done, fail));
+  }else{
+    fallbackCopy(text, done, fail);
+  }
+}
+function fallbackCopy(text, done, fail){
+  const ta = document.createElement("textarea");
+  ta.value = text; ta.style.position="fixed"; ta.style.opacity="0";
+  document.body.appendChild(ta); ta.select();
+  try{ document.execCommand("copy"); done(); }
+  catch(_){ fail(); }
+  document.body.removeChild(ta);
+}
 
 function fmtSize(n){
   if(n < 1024) return n + " B";
@@ -246,7 +283,48 @@ document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () =>
   const p = $("#pane-" + t.dataset.pane);
   p.classList.add("active");
   if(t.dataset.pane === "history") loadHistory();
+  if(t.dataset.pane === "containers") loadContainers();
 }));
+
+function statusBadge(status){
+  if(status && status.startsWith("running")) return {cls:"cc-ok", txt:status};
+  if(status && status.startsWith("exited"))  return {cls:"cc-bad", txt:status};
+  return {cls:"cc-warn", txt:status || "—"};
+}
+
+async function loadContainers(){
+  const r = await fetch("/api/containers").then(x => x.json());
+  if(r.error){ $("#contList").innerHTML = '<div class="empty">'+esc(r.error)+'</div>'; return; }
+  const cs = r.containers || [];
+  if(!cs.length){
+    $("#contList").innerHTML = '<div class="empty">该备份文件未提取到容器命令</div>';
+    $("#contTitle").textContent = r.name;
+    return;
+  }
+  $("#contTitle").textContent = r.name + " · 共 " + cs.length + " 个容器";
+  $("#contList").innerHTML = cs.map(c => {
+    const b = statusBadge(c.status);
+    return `<div class="contcard">
+      <div class="cc-head">
+        <span class="cname">${esc(c.name)}</span>
+        <span class="cc-badge ${b.cls}">${esc(b.txt)}</span>
+        ${c.image?`<span class="cimg">${esc(c.image)}</span>`:""}
+      </div>
+      <div class="codewrap"><pre>${esc(c.multi)}</pre></div>
+      <div class="cc-actions">
+        <button class="iconbtn" data-copy="single" data-i="${c.idx}">📋 复制单行</button>
+        <button class="iconbtn" data-copy="multi" data-i="${c.idx}">📋 复制多行</button>
+      </div>
+    </div>`;
+  }).join("");
+  $("#contList").querySelectorAll("[data-copy]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const c = cs[+btn.dataset.i];
+      copyText(btn.dataset.copy === "single" ? c.single : c.multi,
+               btn.dataset.copy === "single" ? "✅ 已复制单行命令" : "✅ 已复制多行命令");
+    });
+  });
+}
 $("#backupBtn").addEventListener("click", doBackup);
 $("#downloadBtn").addEventListener("click", () => current && download(current));
 $("#diffBtn").addEventListener("click", doDiff);
